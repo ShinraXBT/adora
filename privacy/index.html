@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy policy · Adora</title>
+<style>
+:root{color-scheme:light dark;--bg:#fffdf7;--text:#1f1a0e;--muted:#5f5846;--line:#e7dfc8;--accent:#a87700}
+@media (prefers-color-scheme:dark){:root{--bg:#171307;--text:#f2ecd9;--muted:#b7ad92;--line:#3a3220;--accent:#eab308}}
+body{margin:0;background:var(--bg);color:var(--text);font:16px/1.65 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:720px;margin:0 auto;padding:48px 20px 64px}
+h1{font-size:30px;line-height:1.2;margin:0 0 6px}
+h2{font-size:19px;margin:34px 0 8px}
+p,li{color:var(--text)}
+.meta{color:var(--muted);margin:0 0 28px}
+ul{padding-left:22px}
+li{margin:6px 0}
+code{font-size:.92em;background:color-mix(in srgb,var(--line) 60%,transparent);padding:1px 5px;border-radius:4px}
+a{color:var(--accent)}
+footer{margin-top:40px;padding-top:16px;border-top:1px solid var(--line);color:var(--muted);font-size:14px}
+</style>
+</head>
+<body>
+<main>
+<h1>Privacy policy</h1>
+<p class="meta">Adora: Quick Add for J7Tracker (Unofficial), a browser extension · Last updated: October 6, 2026</p>
+
+<p>Adora helps you follow X accounts in your own J7Tracker account and manage their J7 alerts. It is not made by or affiliated with J7Tracker. The developer runs no server for it, collects no data, and has no access to anything the extension handles.</p>
+
+<h2>Your J7Tracker session</h2>
+<ul>
+  <li>When you use a J7 action (follow, list, alert, removal), the extension runs it inside your open <code>j7tracker.io</code> tab. There it reads your J7Tracker session and sends it only to J7Tracker's own servers (<code>core.j7tracker.io</code> and, for FOMO traders, <code>nj.j7tracker.io</code>), exactly as the J7Tracker website does.</li>
+  <li>The session is never stored by the extension, never shown to the pages you visit, and never sent to the developer or to anyone else. Only a one-way fingerprint (SHA-256) of it is kept, to tell your J7 accounts apart.</li>
+</ul>
+
+<h2>What the extension reads on the pages you visit</h2>
+<ul>
+  <li>Links and visible @handles, to place its J7 buttons next to X accounts.</li>
+  <li>On X: contract addresses in posts (to make them click-to-copy) and the text of bios and posts around a J7 button (to detect a project's chain).</li>
+  <li>This happens on your device. Nothing is sent anywhere until you click a button, and then only the request you asked for goes to J7Tracker.</li>
+</ul>
+
+<h2>What is stored, and where</h2>
+<p>Only in your browser's extension storage, on your device:</p>
+<ul>
+  <li>Your settings (theme, colors, sounds per chain, switches).</li>
+  <li>Dates of the follows made with the extension, and unconfirmed follow attempts, so that a request whose answer was lost is never sent twice.</li>
+  <li>Your last J7 account list (names, alert sounds and colors), so the popup opens instantly.</li>
+  <li>Small caches: public profile names and photos of accounts you follow (from J7Tracker's public profile service, images from X's image server), chains read from X bios (the newest 1,000 accounts; can be turned off in Settings, which erases it), and the follow state shown on page buttons.</li>
+</ul>
+<p>Removing the extension deletes all of it. Turning off "Profile photos" or "Remember chains from X bios" in Settings stops those parts.</p>
+
+<h2>What is never done</h2>
+<ul>
+  <li>No analytics, tracking, advertising or telemetry.</li>
+  <li>No sale or sharing of data with anyone.</li>
+  <li>No reading of passwords, wallets or private keys.</li>
+  <li>No action on your J7Tracker account without your click.</li>
+</ul>
+
+<h2>Opening other sites</h2>
+<p>When you Ctrl+click a contract address, the extension opens it on the terminal you chose (GMGN, Axiom or Padre) in a new tab. That site's own privacy policy then applies.</p>
+
+<h2>Changes and contact</h2>
+<p>If this policy changes, the date above changes with it. Questions: <a href="https://x.com/ShinraHQ_">@ShinraHQ_ on X</a>.</p>
+
+<footer>Adora is an independent extension. J7Tracker is a trademark of its owner.</footer>
+</main>
+</body>
+</html>
