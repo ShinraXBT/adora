@@ -107,6 +107,7 @@ node src/index.js --social <wallet>     # followers pump.fun d'un profil (teste 
 node src/index.js --followers @naseem   # followers d'un compte X
 node src/index.js --followers @naseem --via x-api   # teste tes identifiants API X
 node src/index.js --test-notify         # envoie une fausse alerte sur tous les canaux
+npm run find-endpoints                  # liste les routes d'API présentes dans le code public de pump.fun
 npm test                                # tests (décodage on-chain, logique d'alerte, clients)
 ```
 

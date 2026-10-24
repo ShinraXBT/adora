@@ -13,6 +13,7 @@
   "scripts": {
     "start": "node src/index.js",
     "test": "node --test",
-    "test-notify": "node src/index.js --test-notify"
+    "test-notify": "node src/index.js --test-notify",
+    "find-endpoints": "node scripts/find-endpoints.js"
   }
 }
