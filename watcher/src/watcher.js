@@ -1,7 +1,9 @@
 // Core logic: queues wallets seen on pump.fun, asks pump.fun which X account each one has
 // linked, and alerts on watchlisted handles or on accounts above the follower threshold.
+// X accounts verified on-chain by a fee claim are handled right away, and a patrol keeps
+// re-checking idle wallets seen without X.
 
-import { PUMP_AMM_PROGRAM, PUMP_PROGRAM } from './decode.js';
+import { PUMP_AMM_PROGRAM, PUMP_PROGRAM, SOCIAL_PLATFORM_X } from './decode.js';
 
 const IGNORED = new Set(['11111111111111111111111111111111', PUMP_PROGRAM, PUMP_AMM_PROGRAM]);
 
@@ -13,6 +15,8 @@ export function normalizeHandle(h) {
     .split(/[/?#\s]/)[0]
     .toLowerCase();
 }
+
+const freshStats = () => ({ observed: 0, checked: 0, linked: 0, claims: 0, patrolled: 0, alerts: 0, dropped: 0 });
 
 const withTimeout = (promise, ms) =>
   Promise.race([promise, new Promise(resolve => setTimeout(resolve, ms, null).unref?.())]);
@@ -30,11 +34,12 @@ export class Watcher {
     this.low = new Map(); // wallet -> ctx, traders
     this.busy = new Set();
     this.inflightWallets = new Set();
+    this.watchIds = new Map(); // numeric X id -> watched handle
     this.inflight = 0;
     this.failures = 0;
     this.paused = false;
     this.timer = null;
-    this.stats = { observed: 0, checked: 0, linked: 0, alerts: 0, dropped: 0 };
+    this.stats = freshStats();
     this.setOptions(options);
   }
 
@@ -52,11 +57,27 @@ export class Watcher {
       retryBaseMs: 1000,
       maxQueue: 20_000,
       maxSeen: 300_000,
+      patrolMinAgeMs: 2 * 60_000,
       ...options,
     };
     this.watch = new Set((options.watchHandles ?? []).map(normalizeHandle).filter(Boolean));
     this.minFollowers = Number(options.minFollowers) || 0;
     if (previous) for (const h of this.watch) if (!previous.has(h)) this.alertKnown(h);
+    for (const [id, key] of this.watchIds) if (!this.watch.has(key)) this.watchIds.delete(id);
+  }
+
+  // Learns the numeric X id of each watched handle: fee claims only carry the id, and the id
+  // survives a handle change.
+  async resolveWatchIds() {
+    for (const [id, key] of this.store.xIdEntries()) if (this.watch.has(key)) this.watchIds.set(id, key);
+    const known = new Set(this.watchIds.values());
+    for (const key of this.watch) {
+      if (known.has(key)) continue;
+      const p = await this.twitter.profile(key).catch(() => null);
+      if (!p?.id) continue;
+      this.watchIds.set(String(p.id), key);
+      this.store.setXId(String(p.id), key);
+    }
   }
 
   observe(wallet, ctx = {}, priority = false) {
@@ -153,7 +174,48 @@ export class Watcher {
     if (this.seen.size > this.opts.maxSeen) this.seen.delete(this.seen.keys().next().value);
   }
 
-  async onLinked(wallet, info, ctx, prev) {
+  // A fee claim proves on-chain that this X id was just verified by pump.fun for this wallet.
+  async onSocialClaim({ userId, platform, recipient }, signature) {
+    if (platform !== SOCIAL_PLATFORM_X || !userId || !recipient) return;
+    this.stats.claims++;
+    const id = String(userId);
+    let key = this.watchIds.get(id) ?? this.store.keyForXId(id);
+    let handle = key && (this.store.get(key)?.handle ?? key);
+    let profile = null;
+    if (!key) {
+      profile = await this.twitter.profileById(id).catch(() => null);
+      handle = profile?.handle;
+    }
+    if (!handle) {
+      const found = await this.pump.lookup([recipient]).catch(() => null);
+      handle = found?.get(recipient)?.handle;
+    }
+    key = normalizeHandle(handle);
+    if (!key) return this.log(`[claim] X id ${id} -> ${recipient}: @ introuvable`);
+    this.store.setXId(id, key);
+    const prev = this.seen.get(recipient);
+    this.remember(recipient, { at: this.now(), handle });
+    await this.onLinked(recipient, { handle, verified: true }, { type: 'social-claim', signature }, prev, profile);
+  }
+
+  // Re-checks wallets seen without X, least recently checked first, so a link is caught even
+  // when the wallet stays idle.
+  patrol(n = this.opts.batchSize) {
+    if (this.paused || this.queued >= this.opts.batchSize) return 0;
+    const cutoff = this.now() - this.opts.patrolMinAgeMs;
+    let added = 0;
+    for (const [wallet, s] of this.seen) {
+      if (added >= n || s.at > cutoff) break; // `seen` is ordered by last check
+      if (s.handle || this.low.has(wallet) || this.high.has(wallet) || this.inflightWallets.has(wallet)) continue;
+      this.low.set(wallet, { type: 'patrol' });
+      added++;
+    }
+    this.stats.patrolled += added;
+    if (added) this.schedule();
+    return added;
+  }
+
+  async onLinked(wallet, info, ctx, prev, profile = null) {
     const key = normalizeHandle(info.handle);
     if (!key) return;
     this.stats.linked++;
@@ -162,6 +224,10 @@ export class Watcher {
     rec.verifiedOnPump = !!info.verified;
     rec.lastSeen = this.now();
     if (!rec.wallets.includes(wallet)) rec.wallets.push(wallet);
+    if (profile && Number.isFinite(profile.followers)) {
+      rec.profile = { followers: profile.followers, name: profile.name, verified: profile.verified };
+      rec.profileAt = this.now();
+    }
     this.store.set(key, rec);
     // Seen earlier in this run without this handle: the link happened while we were watching.
     const justLinked = !!prev && normalizeHandle(prev.handle) !== key;
@@ -222,7 +288,7 @@ export class Watcher {
 
   takeStats() {
     const s = { ...this.stats, queued: this.queued, known: this.store.size };
-    this.stats = { observed: 0, checked: 0, linked: 0, alerts: 0, dropped: 0 };
+    this.stats = freshStats();
     return s;
   }
 }

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash, randomBytes } from 'node:crypto';
 import { test } from 'node:test';
-import { base58, decodeProgramData, eventsFromLogs } from '../src/decode.js';
+import { base58, base58Decode, decodeProgramData, eventsFromLogs, hasSocialClaim, socialClaimsFromTransaction } from '../src/decode.js';
 
 // Minimal Borsh writer driven by field lists copied from the official IDLs
 // (pump-fun/pump-public-docs, idl/pump.json and idl/pump_amm.json).
@@ -107,4 +107,50 @@ test('extracts events from transaction logs', () => {
   const events = eventsFromLogs(logs);
   assert.equal(events.length, 1);
   assert.equal(events[0].user, base58(user));
+});
+
+const SOCIAL_FEE_PDA_CLAIMED = [
+  ['timestamp', 'i64'], ['user_id', 'string'], ['platform', 'u8'], ['social_fee_pda', 'pubkey'], ['recipient', 'pubkey'],
+  ['social_claim_authority', 'pubkey'], ['amount_claimed', 'u64'], ['claimable_before', 'u64'], ['lifetime_claimed', 'u64'],
+  ['recipient_balance_before', 'u64'], ['recipient_balance_after', 'u64'], ['quote_mint', 'pubkey'],
+  ['lifetime_stable_claimed', 'u64'],
+];
+
+test('base58 decodes what it encodes', () => {
+  for (const bytes of [Buffer.alloc(32), randomBytes(32), Buffer.from([0, 0, 5, 255])]) {
+    assert.deepEqual(base58Decode(base58(bytes)), bytes);
+  }
+});
+
+test('decodes a SocialFeePdaClaimed event from the logs', () => {
+  const recipient = randomBytes(32);
+  const b64 = encode('SocialFeePdaClaimed', SOCIAL_FEE_PDA_CLAIMED, { user_id: '44196397', platform: 1, recipient });
+  assert.deepEqual(eventsFromLogs([`Program data: ${b64}`]), [
+    { type: 'social-claim', userId: '44196397', platform: 1, recipient: base58(recipient) },
+  ]);
+  assert.equal(hasSocialClaim(['Program log: Instruction: ClaimSocialFeePdaV2']), true);
+  assert.equal(hasSocialClaim(['Program log: Instruction: Buy']), false);
+});
+
+test('finds fee claims in the event CPI or the claim instruction of a transaction', () => {
+  const recipient = randomBytes(32);
+  const event = Buffer.from(encode('SocialFeePdaClaimed', SOCIAL_FEE_PDA_CLAIMED, { user_id: '123', platform: 1, recipient }), 'base64');
+  const cpi = Buffer.concat([Buffer.from('e445a52e51cb9a1d', 'hex'), event]);
+  const viaCpi = socialClaimsFromTransaction({
+    transaction: { message: { accountKeys: [], instructions: [] } },
+    meta: { logMessages: [], innerInstructions: [{ index: 0, instructions: [{ programIdIndex: 0, accounts: [], data: base58(cpi) }] }] },
+  });
+  assert.deepEqual(viaCpi, [{ type: 'social-claim', userId: '123', platform: 1, recipient: base58(recipient) }]);
+
+  // claim_social_fee_pda(user_id: string, platform: u8); accounts[0] is the recipient
+  const id = Buffer.from('987654321');
+  const len = Buffer.alloc(4);
+  len.writeUInt32LE(id.length);
+  const ix = Buffer.concat([Buffer.from('e115fb85a11ec7e2', 'hex'), len, id, Buffer.from([1])]);
+  const keys = ['Payer1111111111111111111111111111111111111', base58(recipient)];
+  const viaIx = socialClaimsFromTransaction({
+    transaction: { message: { accountKeys: keys, instructions: [{ programIdIndex: 0, accounts: [1, 0], data: base58(ix) }] } },
+    meta: { logMessages: [], innerInstructions: [] },
+  });
+  assert.deepEqual(viaIx, [{ type: 'social-claim', userId: '987654321', platform: 1, recipient: base58(recipient) }]);
 });

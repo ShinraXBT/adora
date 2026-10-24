@@ -32,6 +32,22 @@ export class Store {
     this.scheduleSave();
   }
 
+  // Numeric X id -> handle key, so fee claims (which only carry the id) map to known accounts.
+  keyForXId(id) {
+    return this.data.xIds?.[id];
+  }
+
+  xIdEntries() {
+    return Object.entries(this.data.xIds ?? {});
+  }
+
+  setXId(id, key) {
+    this.data.xIds ??= {};
+    if (this.data.xIds[id] === key) return;
+    this.data.xIds[id] = key;
+    this.scheduleSave();
+  }
+
   scheduleSave() {
     if (!this.file || this.timer) return;
     this.timer = setTimeout(() => this.flush(), this.saveDelayMs);

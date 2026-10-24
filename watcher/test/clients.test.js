@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { loadConfig } from '../src/config.js';
 import { buildMessage, formatFollowers, Notifier } from '../src/notify.js';
 import { parsePublicHandles, PumpClient, RetryableError } from '../src/pump.js';
+import { socialClaims } from '../src/sources.js';
 import { TwitterClient } from '../src/twitter.js';
 
 const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -57,10 +58,10 @@ test('reads follower counts from FxTwitter and caches them', async () => {
   const fetchImpl = async url => {
     calls++;
     assert.equal(url, 'https://api.fxtwitter.com/naseem');
-    return json(200, { code: 200, user: { screen_name: 'naseem', name: 'Naseem', followers: 123456, verification: { verified: true } } });
+    return json(200, { code: 200, user: { id: '42', screen_name: 'naseem', name: 'Naseem', followers: 123456, verification: { verified: true } } });
   };
   const tw = new TwitterClient({ fetchImpl });
-  assert.deepEqual(await tw.profile('naseem'), { followers: 123456, name: 'Naseem', verified: true, source: 'fxtwitter' });
+  assert.deepEqual(await tw.profile('naseem'), { handle: 'naseem', id: '42', followers: 123456, name: 'Naseem', verified: true, source: 'fxtwitter' });
   await tw.profile('Naseem');
   assert.equal(calls, 1);
 });
@@ -85,10 +86,10 @@ test('falls back to the X API with a bearer token made from the API key and secr
       assert.equal(init.body, 'grant_type=client_credentials');
       return json(200, { token_type: 'bearer', access_token: 'AAAA' });
     }
-    return json(200, { data: { name: 'Naseem', verified: true, public_metrics: { followers_count: 321_000 } } });
+    return json(200, { data: { id: '42', username: 'naseem', name: 'Naseem', verified: true, public_metrics: { followers_count: 321_000 } } });
   };
   const tw = new TwitterClient({ xApiKey: 'key', xApiSecret: 'secret', fetchImpl });
-  assert.deepEqual(await tw.profile('naseem'), { followers: 321_000, name: 'Naseem', verified: true, source: 'x-api' });
+  assert.deepEqual(await tw.profile('naseem'), { handle: 'naseem', id: '42', followers: 321_000, name: 'Naseem', verified: true, source: 'x-api' });
   await tw.profile('other');
   const tokenCalls = calls.filter(([url]) => url.endsWith('/oauth2/token'));
   assert.equal(tokenCalls.length, 1);
@@ -159,4 +160,35 @@ test('merges config with defaults and environment overrides', () => {
   assert.deepEqual(cfg.watchHandles, ['a', 'b']);
   assert.equal(cfg.minFollowers, 50_000);
   assert.equal(cfg.pump.batchSize, 50);
+});
+
+test('looks up X accounts by numeric id: FxTwitter first, then the X API', async () => {
+  const urls = [];
+  const fetchImpl = async url => {
+    urls.push(url);
+    if (url.includes('fxtwitter')) return json(404, { code: 404 });
+    return json(200, { data: { id: '42', username: 'naseem', name: 'N', public_metrics: { followers_count: 9 } } });
+  };
+  const tw = new TwitterClient({ xBearerToken: 'b', fetchImpl });
+  assert.equal((await tw.profileById('42')).handle, 'naseem');
+  assert.deepEqual(urls, ['https://api.fxtwitter.com/2/profile/id:42', 'https://api.x.com/2/users/42?user.fields=public_metrics,verified']);
+});
+
+test('fetches the transaction of a fee claim once it is confirmed', async () => {
+  let calls = 0;
+  const fetchImpl = async (url, init) => {
+    calls++;
+    assert.equal(url, 'https://rpc.test/?api-key=k');
+    assert.equal(JSON.parse(init.body).method, 'getTransaction');
+    if (calls === 1) return json(200, { result: null });
+    return json(200, {
+      result: {
+        transaction: { message: { accountKeys: ['R1111111111111111111111111111111111111111'], instructions: [] } },
+        meta: { logMessages: [], innerInstructions: [] },
+      },
+    });
+  };
+  const claims = await socialClaims({ signature: 'S', logs: ['Program log: Instruction: ClaimSocialFeePda'] }, { httpUrl: 'https://rpc.test/?api-key=k', fetchImpl, delayMs: 1 });
+  assert.deepEqual(claims, []);
+  assert.equal(calls, 2);
 });

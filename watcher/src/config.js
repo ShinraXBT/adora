@@ -8,9 +8,12 @@ export const DEFAULTS = {
   minFollowers: 100_000,
   solana: {
     wsUrl: 'wss://api.mainnet-beta.solana.com',
+    httpUrl: '', // defaults to wsUrl with http(s)
     commitment: 'processed',
     pumpSwap: true,
+    socialClaims: true,
   },
+  patrol: { walletsPerMinute: 3000 },
   pumpPortal: { enabled: true, wsUrl: 'wss://pumpportal.fun/api/data' },
   pump: {
     apiHosts: ['https://frontend-api-v3.pump.fun', 'https://advanced-api-v2.pump.fun', 'https://profile-api.pump.fun'],
@@ -37,6 +40,7 @@ function merge(base, over) {
 
 const ENV = [
   ['SOLANA_WS_URL', c => c.solana, 'wsUrl'],
+  ['SOLANA_HTTP_URL', c => c.solana, 'httpUrl'],
   ['PUMP_JWT', c => c.pump, 'jwt'],
   ['TWITTERAPI_IO_KEY', c => c.twitter, 'twitterApiIoKey'],
   ['X_BEARER_TOKEN', c => c.twitter, 'xBearerToken'],

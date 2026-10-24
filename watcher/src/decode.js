@@ -1,8 +1,9 @@
-// Decodes pump.fun events from Solana transaction logs ("Program data: <base64>").
+// Decodes pump.fun events from Solana transactions.
 // Layouts follow the official IDLs: https://github.com/pump-fun/pump-public-docs/tree/main/idl
 
 export const PUMP_PROGRAM = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P';
 export const PUMP_AMM_PROGRAM = 'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA';
+export const PUMP_FEES_PROGRAM = 'pfeeUxB6jkeY1Hxd7CsFCAjcbHA9rWtchMGdZ6VojVZ';
 
 // Anchor event discriminators: sha256("event:<Name>")[0..8]
 const DISC = {
@@ -10,7 +11,16 @@ const DISC = {
   trade: 'bddb7fd34ee661ee', // pump TradeEvent
   ammBuy: '67f4521f2cf57777', // pump_amm BuyEvent
   ammSell: '3e2f370aa503dc2a', // pump_amm SellEvent
+  socialClaimed: '3212c141edd2eaec', // pump_fees SocialFeePdaClaimed
 };
+
+// pump_fees instructions signed by pump.fun's social claim authority once the X account is verified.
+const CLAIM_IX = new Set(['e115fb85a11ec7e2', '114df0863abc3595']); // claim_social_fee_pda, _v2
+
+// Prefix of Anchor #[event_cpi] self-invocations (EVENT_IX_TAG, little endian).
+const EVENT_IX_TAG = 'e445a52e51cb9a1d';
+
+export const SOCIAL_PLATFORM_X = 1; // SocialFeePda.platform: 0=pump, 1=twitter
 
 const ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
 
@@ -35,6 +45,26 @@ export function base58(bytes) {
   return out;
 }
 
+export function base58Decode(str) {
+  const bytes = [];
+  for (const ch of str) {
+    let carry = ALPHABET.indexOf(ch);
+    if (carry < 0) throw new Error('invalid base58');
+    for (let j = 0; j < bytes.length; j++) {
+      carry += bytes[j] * 58;
+      bytes[j] = carry & 0xff;
+      carry >>= 8;
+    }
+    while (carry > 0) {
+      bytes.push(carry & 0xff);
+      carry >>= 8;
+    }
+  }
+  let zeros = 0;
+  while (zeros < str.length && str[zeros] === '1') zeros++;
+  return Buffer.from([...new Array(zeros).fill(0), ...bytes.reverse()]);
+}
+
 class Reader {
   constructor(buf, offset = 8) {
     this.buf = buf;
@@ -55,9 +85,12 @@ class Reader {
     this.o += 8;
     return v;
   }
-  bool() {
+  u8() {
     this.need(1);
-    return this.buf[this.o++] !== 0;
+    return this.buf[this.o++];
+  }
+  bool() {
+    return this.u8() !== 0;
   }
   string() {
     this.need(4);
@@ -76,13 +109,7 @@ class Reader {
 
 const lamportsToSol = v => Number(v) / 1e9;
 
-export function decodeProgramData(b64) {
-  let buf;
-  try {
-    buf = Buffer.from(b64, 'base64');
-  } catch {
-    return null;
-  }
+export function decodeEvent(buf) {
   if (buf.length < 8) return null;
   const disc = buf.subarray(0, 8).toString('hex');
   const r = new Reader(buf);
@@ -118,12 +145,24 @@ export function decodeProgramData(b64) {
         const creator = r.pubkey();
         return { type: disc === DISC.ammBuy ? 'amm-buy' : 'amm-sell', pool, user, creator };
       }
+      case DISC.socialClaimed: {
+        r.skip(8); // timestamp
+        const userId = r.string();
+        const platform = r.u8();
+        r.skip(32); // social_fee_pda
+        const recipient = r.pubkey();
+        return { type: 'social-claim', userId, platform, recipient };
+      }
       default:
         return null;
     }
   } catch {
     return null;
   }
+}
+
+export function decodeProgramData(b64) {
+  return decodeEvent(Buffer.from(b64, 'base64'));
 }
 
 export function eventsFromLogs(logs) {
@@ -134,4 +173,42 @@ export function eventsFromLogs(logs) {
     if (ev) events.push(ev);
   }
   return events;
+}
+
+// Anchor logs "Instruction: ClaimSocialFeePda" (or ...V2) for the fee-claim instruction.
+export const hasSocialClaim = logs => (logs || []).some(l => l.includes('Instruction: ClaimSocialFeePda'));
+
+function decodeClaimInstruction(data, accounts, keys) {
+  if (data.length < 8 || !CLAIM_IX.has(data.subarray(0, 8).toString('hex'))) return null;
+  try {
+    const r = new Reader(data);
+    const userId = r.string();
+    const platform = r.u8();
+    const recipient = keys[accounts[0]];
+    return recipient ? { type: 'social-claim', userId, platform, recipient } : null;
+  } catch {
+    return null;
+  }
+}
+
+// Social fee claims from a getTransaction result (encoding "json"): the event in the logs,
+// the #[event_cpi] inner instruction, or failing both the claim instruction itself.
+export function socialClaimsFromTransaction(tx) {
+  const found = new Map();
+  const add = ev => ev?.type === 'social-claim' && found.set(`${ev.userId}:${ev.recipient}`, ev);
+  for (const ev of eventsFromLogs(tx?.meta?.logMessages)) add(ev);
+  const msg = tx?.transaction?.message ?? {};
+  const keys = [...(msg.accountKeys ?? []), ...(tx?.meta?.loadedAddresses?.writable ?? []), ...(tx?.meta?.loadedAddresses?.readonly ?? [])];
+  const instructions = [...(msg.instructions ?? []), ...(tx?.meta?.innerInstructions ?? []).flatMap(i => i.instructions ?? [])];
+  for (const ix of instructions) {
+    let data;
+    try {
+      data = base58Decode(ix.data ?? '');
+    } catch {
+      continue;
+    }
+    if (data.subarray(0, 8).toString('hex') === EVENT_IX_TAG) add(decodeEvent(data.subarray(8)));
+    else add(decodeClaimInstruction(data, ix.accounts ?? [], keys));
+  }
+  return [...found.values()];
 }

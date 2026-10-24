@@ -1,4 +1,4 @@
-// X follower counts. The free FxTwitter API is tried first; twitterapi.io and the official
+// X profiles (handle, numeric id, followers). The free FxTwitter API is tried first; twitterapi.io and the official
 // X API v2 (paid per request) are only used as fallbacks when their credentials are set.
 
 export class TwitterClient {
@@ -20,19 +20,30 @@ export class TwitterClient {
     this.xBearerToken = xBearerToken;
     this.xApiKey = xApiKey;
     this.xApiSecret = xApiSecret;
+    const hasXApi = xBearerToken || (xApiKey && xApiSecret);
     this.providers = [['fxtwitter', h => this.fxTwitter(h)]];
     if (twitterApiIoKey) this.providers.push(['twitterapi.io', h => this.twitterApiIo(h, twitterApiIoKey)]);
-    if (xBearerToken || (xApiKey && xApiSecret)) this.providers.push(['x-api', h => this.xApi(h)]);
+    if (hasXApi) this.providers.push(['x-api', h => this.xApi(h)]);
+    // Lookups by numeric X id, used for on-chain fee claims (which only carry the id).
+    this.idProviders = [['fxtwitter', id => this.fxTwitter(`id:${id}`, '/2/profile/')]];
+    if (hasXApi) this.idProviders.push(['x-api', id => this.xApi(id, false, '/2/users/')]);
   }
 
-  // Returns {followers, name, verified, source} or null when no provider answered.
-  async profile(handle) {
-    const key = handle.toLowerCase();
+  // Returns {handle, id, followers, name, verified, source} or null when no provider answered.
+  profile(handle) {
+    return this.lookup(handle.toLowerCase(), handle, this.providers);
+  }
+
+  profileById(id) {
+    return this.lookup(`id:${id}`, String(id), this.idProviders);
+  }
+
+  async lookup(key, query, providers) {
     const hit = this.cache.get(key);
     if (hit && this.now() - hit.at < this.cacheTtlMs) return hit.value;
-    for (const [source, get] of this.providers) {
+    for (const [source, get] of providers) {
       try {
-        const value = await get(handle);
+        const value = await get(query);
         if (value && Number.isFinite(value.followers)) {
           const result = { ...value, source };
           this.cache.set(key, { at: this.now(), value: result });
@@ -51,18 +62,19 @@ export class TwitterClient {
     return res.json();
   }
 
-  async fxTwitter(handle) {
-    const body = await this.getJson(`https://api.fxtwitter.com/${encodeURIComponent(handle)}`);
+  async fxTwitter(handle, path = '/') {
+    const ref = handle.startsWith('id:') ? `id:${encodeURIComponent(handle.slice(3))}` : encodeURIComponent(handle);
+    const body = await this.getJson(`https://api.fxtwitter.com${path}${ref}`);
     const u = body?.user;
     if (!u) return null;
-    return { followers: u.followers, name: u.name, verified: !!u.verification?.verified };
+    return { handle: u.screen_name, id: u.id, followers: u.followers, name: u.name, verified: !!u.verification?.verified };
   }
 
   async twitterApiIo(handle, key) {
     const body = await this.getJson(`https://api.twitterapi.io/twitter/user/info?userName=${encodeURIComponent(handle)}`, { 'x-api-key': key });
     const u = body?.data;
     if (!u) return null;
-    return { followers: u.followers, name: u.name, verified: !!(u.isBlueVerified || u.isVerified) };
+    return { handle: u.userName, id: u.id, followers: u.followers, name: u.name, verified: !!(u.isBlueVerified || u.isVerified) };
   }
 
   // App-only bearer token from the API Key + API Key Secret, cached as X asks.
@@ -82,8 +94,8 @@ export class TwitterClient {
     return this.xBearerToken;
   }
 
-  async xApi(handle, retried = false) {
-    const url = `https://api.x.com/2/users/by/username/${encodeURIComponent(handle)}?user.fields=public_metrics,verified`;
+  async xApi(handle, retried = false, path = '/2/users/by/username/') {
+    const url = `https://api.x.com${path}${encodeURIComponent(handle)}?user.fields=public_metrics,verified`;
     let body;
     try {
       body = await this.getJson(url, { authorization: `Bearer ${await this.xToken()}` });
@@ -91,12 +103,12 @@ export class TwitterClient {
       // A revoked bearer token can be replaced when the API key and secret are known.
       if (e.status === 401 && !retried && this.xApiKey && this.xApiSecret) {
         await this.xToken(true);
-        return this.xApi(handle, true);
+        return this.xApi(handle, true, path);
       }
       throw e;
     }
     const u = body?.data;
     if (!u) return null;
-    return { followers: u.public_metrics?.followers_count, name: u.name, verified: !!u.verified };
+    return { handle: u.username, id: u.id, followers: u.public_metrics?.followers_count, name: u.name, verified: !!u.verified };
   }
 }

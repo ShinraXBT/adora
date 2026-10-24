@@ -16,6 +16,7 @@ const ACTIONS = {
   'amm-buy': 'a acheté (PumpSwap)',
   'amm-sell': 'a vendu (PumpSwap)',
   creator: 'est le créateur d’un coin tradé',
+  patrol: 'repéré par la patrouille, sans nouvelle activité on-chain',
 };
 
 // alert: { handle, wallet, reasons: ['watchlist'|'followers'|'already-known'], profile, ctx, justLinked }
@@ -30,8 +31,9 @@ export function buildMessage(alert) {
       : '👥 followers inconnus',
   );
   if (reasons.includes('already-known')) lines.push('ℹ️ déjà repéré avant l’ajout à la watchlist');
+  else if (ctx.type === 'social-claim') lines.push('🆕 X vérifié on-chain à l’instant : il réclame les frais pump.fun réservés à son compte');
   else lines.push(justLinked ? '🆕 vient de lier son X (wallet vu sans X avant)' : '🆕 première détection avec X lié');
-  if (ctx.type) {
+  if (ctx.type && ctx.type !== 'social-claim') {
     const what = ctx.type === 'create' && ctx.symbol ? ` $${ctx.symbol}${ctx.name ? ` (${ctx.name})` : ''}` : '';
     const sol = ctx.sol ? ` · ${ctx.sol.toFixed(2)} SOL` : '';
     lines.push(`⚡ ${ACTIONS[ctx.type] ?? ctx.type}${what}${sol}`);

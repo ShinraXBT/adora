@@ -89,6 +89,10 @@ async function run() {
   log(`seuil followers: ${cfg.minFollowers ? formatFollowers(cfg.minFollowers) : 'désactivé'}`);
   log(`notifications: console${notifier.channels.map(c => ` + ${c}`).join('')}`);
   log(`comptes X déjà connus: ${store.size}`);
+  log(`réclamations de frais X on-chain: ${cfg.solana.socialClaims ? 'surveillées' : 'désactivées'}`);
+  log(`patrouille: ${cfg.patrol.walletsPerMinute ? `${cfg.patrol.walletsPerMinute} wallets/min` : 'désactivée'}`);
+  const resolveIds = () => watcher.resolveWatchIds().catch(e => log(`[watcher] ids X: ${e.message}`));
+  resolveIds();
   if (cfg.solana.wsUrl.includes('api.mainnet-beta.solana.com')) {
     log('⚠️  RPC Solana public : limité et souvent coupé. Mets un RPC Helius/QuickNode (solana.wsUrl) pour du temps réel fiable.');
   }
@@ -97,9 +101,13 @@ async function run() {
   const sources = [
     solanaSource({
       url: cfg.solana.wsUrl,
+      httpUrl: cfg.solana.httpUrl,
       programs,
       commitment: cfg.solana.commitment,
       log,
+      onSocialClaim: cfg.solana.socialClaims
+        ? (claim, signature) => watcher.onSocialClaim(claim, signature).catch(e => log(`[claim] ${e.stack ?? e}`))
+        : null,
       onEvents: (events, signature) => {
         for (const ev of events) {
           const ctx = { type: ev.type, mint: ev.mint, symbol: ev.symbol, name: ev.name, sol: ev.sol, signature };
@@ -129,16 +137,23 @@ async function run() {
     configFile,
     next => {
       watcher.setOptions(watcherOptions(next));
+      resolveIds();
       log(`[config] rechargée · watchlist: ${[...watcher.watch].map(h => `@${h}`).join(', ') || '(vide)'} · seuil: ${formatFollowers(next.minFollowers)}`);
     },
     log,
   );
 
+  if (cfg.patrol.walletsPerMinute > 0) {
+    const batch = Math.min(cfg.pump.batchSize, cfg.patrol.walletsPerMinute);
+    setInterval(() => watcher.patrol(batch), (60_000 * batch) / cfg.patrol.walletsPerMinute).unref();
+  }
+
   setInterval(() => {
     const s = watcher.takeStats();
     log(
-      `[stats/min] activités ${s.observed} · wallets vérifiés ${s.checked} · avec X ${s.linked} · alertes ${s.alerts} · file ${s.queued}` +
-        `${s.dropped ? ` · ignorés ${s.dropped}` : ''} · X connus ${s.known} · mode ${pump.mode}`,
+      `[stats/min] activités ${s.observed} · wallets vérifiés ${s.checked} (patrouille ${s.patrolled}) · avec X ${s.linked}` +
+        ` · claims X ${s.claims} · alertes ${s.alerts} · file ${s.queued}${s.dropped ? ` · ignorés ${s.dropped}` : ''}` +
+        ` · X connus ${s.known} · mode ${pump.mode}`,
     );
   }, 60_000).unref();
 

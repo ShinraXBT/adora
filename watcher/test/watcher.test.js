@@ -6,7 +6,7 @@ import { normalizeHandle, Watcher } from '../src/watcher.js';
 
 const tick = (ms = 0) => new Promise(r => setTimeout(r, ms));
 
-function setup({ linked = {}, followers = {}, options = {}, pumpFailures = 0, twitterDelayMs = 0 } = {}) {
+function setup({ linked = {}, followers = {}, ids = {}, options = {}, pumpFailures = 0, twitterDelayMs = 0 } = {}) {
   let clock = 1_000_000;
   const alerts = [];
   const lookups = [];
@@ -18,11 +18,19 @@ function setup({ linked = {}, followers = {}, options = {}, pumpFailures = 0, tw
       return new Map(addresses.map(a => [a, linked[a] ? { handle: linked[a], verified: true } : null]));
     },
   };
+  const twitterCalls = [];
+  const idOf = handle => Object.keys(ids).find(id => ids[id] === handle.toLowerCase());
   const twitter = {
     async profile(handle) {
+      twitterCalls.push(handle);
       if (twitterDelayMs) await tick(twitterDelayMs);
       const n = followers[handle.toLowerCase()];
-      return n == null ? null : { followers: n, name: handle, verified: false, source: 'fake' };
+      return n == null ? null : { handle, id: idOf(handle.toLowerCase()), followers: n, name: handle, verified: false, source: 'fake' };
+    },
+    async profileById(id) {
+      twitterCalls.push(`id:${id}`);
+      const handle = ids[id];
+      return handle && followers[handle] != null ? { handle, id, followers: followers[handle], name: handle, verified: false } : null;
     },
   };
   const notifier = { send: async a => void alerts.push(a) };
@@ -35,7 +43,7 @@ function setup({ linked = {}, followers = {}, options = {}, pumpFailures = 0, tw
     log: () => {},
     now: () => clock,
   });
-  return { watcher, alerts, lookups, linked, advance: ms => (clock += ms) };
+  return { watcher, alerts, lookups, linked, twitterCalls, advance: ms => (clock += ms) };
 }
 
 async function settle(watcher) {
@@ -158,4 +166,65 @@ test('does not look up a wallet again while its lookup is in flight', async () =
   watcher.observe('W');
   await settle(watcher);
   assert.equal(lookups.flat().length, 1);
+});
+
+test('alerts instantly on a fee claim by a watchlisted X id, without asking pump.fun', async () => {
+  const { watcher, alerts, lookups } = setup({ followers: { naseem: 4200 }, ids: { 777: 'naseem' }, options: { watchHandles: ['naseem'] } });
+  await watcher.resolveWatchIds();
+  await watcher.onSocialClaim({ userId: '777', platform: 1, recipient: 'R1' }, 'SIG');
+  await settle(watcher);
+  assert.equal(alerts.length, 1);
+  assert.deepEqual(alerts[0].reasons, ['watchlist']);
+  assert.equal(alerts[0].wallet, 'R1');
+  assert.equal(alerts[0].ctx.type, 'social-claim');
+  assert.equal(lookups.length, 0);
+});
+
+test('resolves an unknown X id from a fee claim and applies the follower threshold', async () => {
+  const { watcher, alerts, twitterCalls } = setup({ followers: { bigkol: 250_000 }, ids: { 55: 'bigkol' } });
+  await watcher.onSocialClaim({ userId: '55', platform: 1, recipient: 'R2' }, 'SIG');
+  await settle(watcher);
+  assert.deepEqual(alerts.map(a => [a.handle, a.reasons]), [['bigkol', ['followers']]]);
+  assert.deepEqual(twitterCalls, ['id:55']);
+  // A later claim by the same id is recognised from the store and does not alert again.
+  await watcher.onSocialClaim({ userId: '55', platform: 1, recipient: 'R2' }, 'SIG2');
+  await settle(watcher);
+  assert.equal(alerts.length, 1);
+  assert.deepEqual(twitterCalls, ['id:55']);
+});
+
+test('falls back to pump.fun for the claiming wallet, and ignores non-X platforms', async () => {
+  const { watcher, alerts } = setup({ linked: { R3: 'BigKol' }, followers: { bigkol: 300_000 } });
+  await watcher.onSocialClaim({ userId: '1', platform: 0, recipient: 'R3' }, 'SIG');
+  await settle(watcher);
+  assert.equal(alerts.length, 0);
+  await watcher.onSocialClaim({ userId: '999', platform: 1, recipient: 'R3' }, 'SIG');
+  await settle(watcher);
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].handle, 'BigKol');
+});
+
+test('patrol re-checks idle wallets and catches an X linked without any new activity', async () => {
+  const { watcher, alerts, linked, advance } = setup({ followers: { naseem: 10 }, options: { watchHandles: ['naseem'], patrolMinAgeMs: 60_000 } });
+  watcher.observe('IDLE');
+  watcher.observe('RECENT');
+  await settle(watcher);
+  assert.equal(watcher.patrol(), 0); // too recent
+  advance(61_000);
+  linked.IDLE = 'naseem';
+  assert.equal(watcher.patrol(), 2);
+  await settle(watcher);
+  assert.equal(alerts.length, 1);
+  assert.equal(alerts[0].wallet, 'IDLE');
+  assert.equal(alerts[0].ctx.type, 'patrol');
+  assert.equal(alerts[0].justLinked, true);
+  assert.equal(watcher.patrol(), 0); // both were just re-checked
+});
+
+test('reuses X ids already stored instead of looking them up again', async () => {
+  const { watcher, twitterCalls } = setup({ options: { watchHandles: ['naseem'] } });
+  watcher.store.setXId('777', 'naseem');
+  await watcher.resolveWatchIds();
+  assert.equal(watcher.watchIds.get('777'), 'naseem');
+  assert.deepEqual(twitterCalls, []);
 });

@@ -5,8 +5,10 @@
   "solana": {
     "wsUrl": "wss://mainnet.helius-rpc.com/?api-key=TA_CLE_HELIUS",
     "commitment": "processed",
-    "pumpSwap": true
+    "pumpSwap": true,
+    "socialClaims": true
   },
+  "patrol": { "walletsPerMinute": 3000 },
   "pumpPortal": { "enabled": true },
 
   "pump": { "jwt": "", "batchSize": 50, "recheckMinutes": 5 },
