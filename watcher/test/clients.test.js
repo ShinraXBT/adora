@@ -65,11 +65,48 @@ test('reads follower counts from FxTwitter and caches them', async () => {
   assert.equal(calls, 1);
 });
 
-test('falls back to the next follower provider on failure', async () => {
-  const fetchImpl = async url =>
-    url.includes('twitterapi.io') ? json(500, {}) : json(200, { user: { name: 'N', followers: 7 } });
-  const tw = new TwitterClient({ twitterApiIoKey: 'k', fetchImpl });
+test('asks FxTwitter first, without spending paid credentials', async () => {
+  const urls = [];
+  const fetchImpl = async url => {
+    urls.push(url);
+    return json(200, { user: { name: 'N', followers: 7 } });
+  };
+  const tw = new TwitterClient({ twitterApiIoKey: 'k', xBearerToken: 'b', fetchImpl });
   assert.equal((await tw.profile('n')).source, 'fxtwitter');
+  assert.deepEqual(urls, ['https://api.fxtwitter.com/n']);
+});
+
+test('falls back to the X API with a bearer token made from the API key and secret', async () => {
+  const calls = [];
+  const fetchImpl = async (url, init = {}) => {
+    calls.push([url, init.headers?.authorization]);
+    if (url.includes('fxtwitter')) return json(503, {});
+    if (url === 'https://api.x.com/oauth2/token') {
+      assert.equal(init.body, 'grant_type=client_credentials');
+      return json(200, { token_type: 'bearer', access_token: 'AAAA' });
+    }
+    return json(200, { data: { name: 'Naseem', verified: true, public_metrics: { followers_count: 321_000 } } });
+  };
+  const tw = new TwitterClient({ xApiKey: 'key', xApiSecret: 'secret', fetchImpl });
+  assert.deepEqual(await tw.profile('naseem'), { followers: 321_000, name: 'Naseem', verified: true, source: 'x-api' });
+  await tw.profile('other');
+  const tokenCalls = calls.filter(([url]) => url.endsWith('/oauth2/token'));
+  assert.equal(tokenCalls.length, 1);
+  assert.equal(tokenCalls[0][1], `Basic ${Buffer.from('key:secret').toString('base64')}`);
+  assert.equal(calls.at(-1)[0], 'https://api.x.com/2/users/by/username/other?user.fields=public_metrics,verified');
+  assert.equal(calls.at(-1)[1], 'Bearer AAAA');
+});
+
+test('replaces a revoked X bearer token once', async () => {
+  let tokens = 0;
+  const fetchImpl = async (url, init = {}) => {
+    if (url.includes('fxtwitter')) return json(503, {});
+    if (url.endsWith('/oauth2/token')) return json(200, { access_token: `T${++tokens}` });
+    return init.headers.authorization === 'Bearer T1' ? json(200, { data: { public_metrics: { followers_count: 5 } } }) : json(401, {});
+  };
+  const tw = new TwitterClient({ xBearerToken: 'old', xApiKey: 'k', xApiSecret: 's', fetchImpl });
+  assert.equal((await tw.profile('n')).followers, 5);
+  assert.equal(tokens, 1);
 });
 
 test('formats follower counts', () => {
@@ -116,8 +153,9 @@ test('sends Telegram, Discord and ntfy alerts', async () => {
 });
 
 test('merges config with defaults and environment overrides', () => {
-  const cfg = loadConfig(null, { TELEGRAM_BOT_TOKEN: 'tok', WATCH_HANDLES: 'a,b', MIN_FOLLOWERS: '50000' });
+  const cfg = loadConfig(null, { TELEGRAM_BOT_TOKEN: 'tok', X_API_KEY: 'k', X_API_SECRET: 's', WATCH_HANDLES: 'a,b', MIN_FOLLOWERS: '50000' });
   assert.equal(cfg.notify.telegram.botToken, 'tok');
+  assert.deepEqual([cfg.twitter.xApiKey, cfg.twitter.xApiSecret], ['k', 's']);
   assert.deepEqual(cfg.watchHandles, ['a', 'b']);
   assert.equal(cfg.minFollowers, 50_000);
   assert.equal(cfg.pump.batchSize, 50);

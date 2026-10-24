@@ -18,7 +18,7 @@ export const DEFAULTS = {
     batchSize: 50,
     recheckMinutes: 5,
   },
-  twitter: { twitterApiIoKey: '', xBearerToken: '' },
+  twitter: { twitterApiIoKey: '', xBearerToken: '', xApiKey: '', xApiSecret: '' },
   notify: {
     telegram: { botToken: '', chatId: '' },
     discord: { webhookUrl: '' },
@@ -40,6 +40,8 @@ const ENV = [
   ['PUMP_JWT', c => c.pump, 'jwt'],
   ['TWITTERAPI_IO_KEY', c => c.twitter, 'twitterApiIoKey'],
   ['X_BEARER_TOKEN', c => c.twitter, 'xBearerToken'],
+  ['X_API_KEY', c => c.twitter, 'xApiKey'],
+  ['X_API_SECRET', c => c.twitter, 'xApiSecret'],
   ['TELEGRAM_BOT_TOKEN', c => c.notify.telegram, 'botToken'],
   ['TELEGRAM_CHAT_ID', c => c.notify.telegram, 'chatId'],
   ['DISCORD_WEBHOOK_URL', c => c.notify.discord, 'webhookUrl'],

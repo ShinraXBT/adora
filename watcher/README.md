@@ -51,12 +51,26 @@ Pour vérifier les notifications sans attendre une vraie détection : `npm run t
 | `pumpPortal.enabled` | Flux de secours PumpPortal pour les nouveaux coins. |
 | `pump.recheckMinutes` | Délai minimum avant de revérifier un wallet vu sans X (défaut 5). |
 | `pump.jwt` | Seulement si pump.fun se met à exiger une connexion : le jeton de ta session pump.fun. |
-| `twitter.twitterApiIoKey` / `twitter.xBearerToken` | Optionnel. Sans clé, les followers viennent de l'API gratuite FxTwitter. |
+| `twitter.xBearerToken` ou `twitter.xApiKey` + `twitter.xApiSecret` | Optionnel. Ton accès à l'API X officielle, utilisé seulement si FxTwitter ne répond pas. Voir « Followers X » plus bas. |
+| `twitter.twitterApiIoKey` | Optionnel. Autre secours payant (twitterapi.io). |
 | `notify.*` | Canaux d'alerte, voir ci-dessous. Tu peux en activer plusieurs. |
 
 `watchHandles` et `minFollowers` sont relus à chaud : ajoute un @ dans `config.json` et c'est pris en compte en 2 secondes, sans redémarrer. Si ce @ a déjà été vu sur pump.fun, tu reçois l'alerte tout de suite. Les autres réglages demandent un redémarrage.
 
-Les secrets peuvent aussi passer par variables d'environnement : `SOLANA_WS_URL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `DISCORD_WEBHOOK_URL`, `NTFY_TOPIC`, `TWITTERAPI_IO_KEY`, `X_BEARER_TOKEN`, `PUMP_JWT`, `WATCH_HANDLES` (séparés par des virgules), `MIN_FOLLOWERS`.
+Les secrets peuvent aussi passer par variables d'environnement : `SOLANA_WS_URL`, `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `DISCORD_WEBHOOK_URL`, `NTFY_TOPIC`, `X_BEARER_TOKEN`, `X_API_KEY`, `X_API_SECRET`, `TWITTERAPI_IO_KEY`, `PUMP_JWT`, `WATCH_HANDLES` (séparés par des virgules), `MIN_FOLLOWERS`.
+
+### Followers X
+
+Le watcher demande d'abord à FxTwitter, gratuit et sans clé. Si FxTwitter ne répond pas, il passe à twitterapi.io puis à l'API X officielle, si leurs identifiants sont configurés. Chaque compte n'est recherché qu'une fois toutes les 6 h.
+
+Depuis février 2026, l'API X est facturée à l'usage, environ 0,01 $ par recherche de profil : c'est pour ça qu'elle sert seulement de secours.
+
+Dans le portail développeur X (Keys and tokens), il te faut **l'un des deux** :
+
+- le **Bearer Token** → `twitter.xBearerToken` ;
+- ou l'**API Key** et l'**API Key Secret** (appelées aussi Consumer Keys) → `twitter.xApiKey` et `twitter.xApiSecret`. Le watcher en tire lui-même un Bearer Token, et le régénère s'il est révoqué.
+
+L'Access Token, l'Access Token Secret, le Client ID et le Client Secret ne servent pas ici. Mets ces clés dans `config.json` ou en variables d'environnement, jamais dans un fichier commité : ce repo est public.
 
 ### Canaux d'alerte
 
@@ -69,6 +83,7 @@ Les secrets peuvent aussi passer par variables d'environnement : `SOLANA_WS_URL`
 ```bash
 node src/index.js --check <wallet>      # quel X est lié à ce wallet pump.fun, et ses followers
 node src/index.js --followers @naseem   # followers d'un compte X
+node src/index.js --followers @naseem --via x-api   # teste tes identifiants API X
 node src/index.js --test-notify         # envoie une fausse alerte sur tous les canaux
 npm test                                # tests (décodage on-chain, logique d'alerte, clients)
 ```

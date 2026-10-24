@@ -4,6 +4,7 @@
 //   node src/index.js --test-notify         send a test alert to every configured channel
 //   node src/index.js --check <wallet>      show the X account linked to a pump.fun wallet
 //   node src/index.js --followers <handle>  show an X account's follower count
+//     [--via fxtwitter|twitterapi.io|x-api]   ...from one provider only, to test its credentials
 //   --config <file>                         config file (default: config.json next to src/)
 
 import { dirname, resolve } from 'node:path';
@@ -57,8 +58,24 @@ if (args.includes('--test-notify')) {
   }
 } else if (arg('--followers')) {
   const handle = normalizeHandle(arg('--followers'));
-  const p = await twitter.profile(handle);
-  console.log(p ? `@${handle}: ${p.followers} followers (${p.name}) via ${p.source}` : `@${handle}: introuvable (compte inexistant ou API X injoignable)`);
+  const via = arg('--via');
+  if (via) {
+    const provider = twitter.providers.find(([source]) => source === via);
+    if (!provider) {
+      console.log(`--via ${via}: source inconnue ou identifiants absents de la config (sources: ${twitter.providers.map(([s]) => s).join(', ')})`);
+      process.exit(1);
+    }
+    try {
+      const p = await provider[1](handle);
+      console.log(p ? `@${handle}: ${p.followers} followers (${p.name}) via ${via}` : `@${handle}: introuvable via ${via}`);
+    } catch (e) {
+      console.log(`@${handle}: échec via ${via}: ${e.message}`);
+      process.exitCode = 1;
+    }
+  } else {
+    const p = await twitter.profile(handle);
+    console.log(p ? `@${handle}: ${p.followers} followers (${p.name}) via ${p.source}` : `@${handle}: introuvable (compte inexistant ou API X injoignable)`);
+  }
 } else {
   await run();
 }

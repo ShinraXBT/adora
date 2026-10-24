@@ -11,7 +11,7 @@
 
   "pump": { "jwt": "", "batchSize": 50, "recheckMinutes": 5 },
 
-  "twitter": { "twitterApiIoKey": "", "xBearerToken": "" },
+  "twitter": { "xBearerToken": "", "xApiKey": "", "xApiSecret": "", "twitterApiIoKey": "" },
 
   "notify": {
     "telegram": { "botToken": "", "chatId": "" },
