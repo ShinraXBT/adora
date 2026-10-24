@@ -1,0 +1,21 @@
+{
+  "watchHandles": ["naseem"],
+  "minFollowers": 100000,
+
+  "solana": {
+    "wsUrl": "wss://mainnet.helius-rpc.com/?api-key=TA_CLE_HELIUS",
+    "commitment": "processed",
+    "pumpSwap": true
+  },
+  "pumpPortal": { "enabled": true },
+
+  "pump": { "jwt": "", "batchSize": 50, "recheckMinutes": 5 },
+
+  "twitter": { "twitterApiIoKey": "", "xBearerToken": "" },
+
+  "notify": {
+    "telegram": { "botToken": "", "chatId": "" },
+    "discord": { "webhookUrl": "" },
+    "ntfy": { "topic": "" }
+  }
+}
