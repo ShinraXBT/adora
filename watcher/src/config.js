@@ -14,6 +14,7 @@ export const DEFAULTS = {
     socialClaims: true,
   },
   patrol: { walletsPerMinute: 3000 },
+  social: { enabled: true, seedWallets: [], autoSeeds: 20, intervalSeconds: 30 },
   pumpPortal: { enabled: true, wsUrl: 'wss://pumpportal.fun/api/data' },
   pump: {
     apiHosts: ['https://frontend-api-v3.pump.fun', 'https://advanced-api-v2.pump.fun', 'https://profile-api.pump.fun'],

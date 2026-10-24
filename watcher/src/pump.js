@@ -1,8 +1,9 @@
-// Reads which X account a pump.fun wallet has linked, through pump.fun's own (unofficial,
-// undocumented) web API. Endpoints come from the 2026-06-17 capture of
-// https://github.com/BankkRoll/pumpfun-apis:
+// Reads which X account a pump.fun wallet has linked, and who follows a profile, through
+// pump.fun's own (unofficial, undocumented) web API. Endpoints come from the 2026-06-17 capture
+// of https://github.com/BankkRoll/pumpfun-apis:
 //   POST /x/public-handles  {addresses:[...]} -> { <address>: { handle, verified } }
 //   GET  /users/<address>                      -> { ..., x_username, x_id }
+//   GET  /following/followers/<address>        -> [ { address, username, timestamp, ... } ]
 
 const PROBE_ADDRESS = '11111111111111111111111111111111';
 
@@ -16,6 +17,15 @@ const BROWSER_HEADERS = {
   'user-agent':
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36',
 };
+
+// Profile lists (followers, following): a bare array or one wrapped in an object.
+export function parseProfileList(body) {
+  const list = Array.isArray(body) ? body : body?.followers ?? body?.data ?? body?.items ?? body?.users ?? [];
+  if (!Array.isArray(list)) return [];
+  return list
+    .map(e => ({ address: e?.address ?? e?.wallet ?? e?.user ?? e?.follower ?? e?.userId, timestamp: e?.timestamp ?? e?.created_at ?? null }))
+    .filter(e => typeof e.address === 'string' && e.address.length >= 32);
+}
 
 // Accepts both the observed object shape and an array shape, in case pump.fun changes it.
 export function parsePublicHandles(body) {
@@ -114,6 +124,23 @@ export class PumpClient {
     };
     await Promise.all(Array.from({ length: Math.min(this.concurrency, addresses.length) }, worker));
     return out;
+  }
+
+  // Who follows a profile, as its Followers tab shows. The first host that answers is kept.
+  async followers(address) {
+    let status = 0;
+    for (const host of this.followersHost ? [this.followersHost] : this.hosts) {
+      const res = await this.request(`${host}/following/followers/${address}`);
+      if (res.status === 404 && !this.followersHost) {
+        status = 404;
+        continue;
+      }
+      if (res.status === 404) return [];
+      if (!res.ok) throw new Error(`HTTP ${res.status} /following/followers`);
+      this.followersHost = host;
+      return parseProfileList(await res.json());
+    }
+    throw new Error(`HTTP ${status} /following/followers`);
   }
 
   async user(address) {

@@ -27,6 +27,10 @@ export class Store {
     return this.data.linked[key];
   }
 
+  records() {
+    return Object.values(this.data.linked);
+  }
+
   set(key, rec) {
     this.data.linked[key] = rec;
     this.scheduleSave();

@@ -9,6 +9,7 @@
     "socialClaims": true
   },
   "patrol": { "walletsPerMinute": 3000 },
+  "social": { "enabled": true, "seedWallets": [], "autoSeeds": 20, "intervalSeconds": 30 },
   "pumpPortal": { "enabled": true },
 
   "pump": { "jwt": "", "batchSize": 50, "recheckMinutes": 5 },

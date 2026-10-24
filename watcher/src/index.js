@@ -3,6 +3,7 @@
 //   node src/index.js                       run the watcher
 //   node src/index.js --test-notify         send a test alert to every configured channel
 //   node src/index.js --check <wallet>      show the X account linked to a pump.fun wallet
+//   node src/index.js --social <wallet>     list who follows a pump.fun profile (tests the social feed)
 //   node src/index.js --followers <handle>  show an X account's follower count
 //     [--via fxtwitter|twitterapi.io|x-api]   ...from one provider only, to test its credentials
 //   --config <file>                         config file (default: config.json next to src/)
@@ -13,6 +14,7 @@ import { loadConfig, watchConfig, watcherOptions } from './config.js';
 import { PUMP_AMM_PROGRAM, PUMP_PROGRAM } from './decode.js';
 import { formatFollowers, Notifier } from './notify.js';
 import { PumpClient } from './pump.js';
+import { SocialGraph } from './social.js';
 import { pumpPortalSource, solanaSource } from './sources.js';
 import { Store } from './store.js';
 import { TwitterClient } from './twitter.js';
@@ -56,6 +58,16 @@ if (args.includes('--test-notify')) {
     console.log(`pump.fun injoignable: ${e.message}`);
     process.exitCode = 1;
   }
+} else if (arg('--social')) {
+  const wallet = arg('--social');
+  try {
+    const list = await pump.followers(wallet);
+    console.log(`${wallet}: ${list.length} followers via ${pump.followersHost}`);
+    for (const f of list.slice(0, 10)) console.log(`  ${f.address}${f.timestamp ? ` · ${new Date(f.timestamp).toISOString()}` : ''}`);
+  } catch (e) {
+    console.log(`${wallet}: followers illisibles (${e.message})${/40[13]/.test(e.message) ? ' — mets pump.jwt dans la config' : ''}`);
+    process.exitCode = 1;
+  }
 } else if (arg('--followers')) {
   const handle = normalizeHandle(arg('--followers'));
   const via = arg('--via');
@@ -91,6 +103,7 @@ async function run() {
   log(`comptes X déjà connus: ${store.size}`);
   log(`réclamations de frais X on-chain: ${cfg.solana.socialClaims ? 'surveillées' : 'désactivées'}`);
   log(`patrouille: ${cfg.patrol.walletsPerMinute ? `${cfg.patrol.walletsPerMinute} wallets/min` : 'désactivée'}`);
+  log(`graphe social: ${cfg.social.enabled ? `${cfg.social.seedWallets.length} wallets seed + ${cfg.social.autoSeeds} plus gros comptes trouvés, toutes les ${cfg.social.intervalSeconds}s` : 'désactivé'}`);
   const resolveIds = () => watcher.resolveWatchIds().catch(e => log(`[watcher] ids X: ${e.message}`));
   resolveIds();
   if (cfg.solana.wsUrl.includes('api.mainnet-beta.solana.com')) {
@@ -133,10 +146,17 @@ async function run() {
     );
   }
 
+  const social = new SocialGraph({ pump, watcher, store, seedWallets: cfg.social.seedWallets, autoSeeds: cfg.social.autoSeeds, log });
+  if (cfg.social.enabled) {
+    social.tick();
+    setInterval(() => social.tick(), cfg.social.intervalSeconds * 1000).unref();
+  }
+
   watchConfig(
     configFile,
     next => {
       watcher.setOptions(watcherOptions(next));
+      social.seedWallets = next.social.seedWallets;
       resolveIds();
       log(`[config] rechargée · watchlist: ${[...watcher.watch].map(h => `@${h}`).join(', ') || '(vide)'} · seuil: ${formatFollowers(next.minFollowers)}`);
     },
@@ -152,7 +172,7 @@ async function run() {
     const s = watcher.takeStats();
     log(
       `[stats/min] activités ${s.observed} · wallets vérifiés ${s.checked} (patrouille ${s.patrolled}) · avec X ${s.linked}` +
-        ` · claims X ${s.claims} · alertes ${s.alerts} · file ${s.queued}${s.dropped ? ` · ignorés ${s.dropped}` : ''}` +
+        ` · nouveaux follows ${social.takeFresh()} · claims X ${s.claims} · alertes ${s.alerts} · file ${s.queued}${s.dropped ? ` · ignorés ${s.dropped}` : ''}` +
         ` · X connus ${s.known} · mode ${pump.mode}`,
     );
   }, 60_000).unref();

@@ -9,10 +9,11 @@ Une seule alerte par compte X, avec son @ et ses followers. Node.js 22+ suffit, 
 
 ## Comment ça marche
 
-pump.fun ne publie aucun événement « compte X lié » : le lien se fait chez pump.fun, hors blockchain. Le watcher combine donc trois détections, de la plus rapide à la plus large :
+pump.fun ne publie aucun événement « compte X lié » : le X n'apparaît que sur le profil de la personne. Le watcher doit donc d'abord trouver les wallets à vérifier, puis lire leur profil. Il combine quatre détections :
 
 | Détection | Quand l'alerte part | Qui est couvert |
 | --- | --- | --- |
+| **Graphe social de l'app** | Au poll suivant (30 s par défaut) après que la personne a suivi un profil seed | Les nouveaux comptes qui suivent un gros compte ou un profil que tu as choisi |
 | **Réclamation de frais X (on-chain)** | À l'instant où la personne connecte son X pour réclamer ses frais | Les comptes X à qui des coins ont réservé des frais (fréquent pour les KOLs) |
 | **Activité on-chain** | À son premier achat, vente ou création de coin après le lien | Tous ceux qui tradent ou lancent un coin |
 | **Patrouille** | Dans le cycle de patrouille (environ 100 min pour 300 000 wallets à 3 000/min) | Les wallets déjà vus qui lient leur X sans rien faire ensuite |
@@ -26,15 +27,18 @@ Patrouille ─────────────────────► wa
                                                                               quel X est lié ?
 ```
 
-1. **Réclamation de frais.** Des coins peuvent réserver leurs frais de créateur à un compte X. Pour les récupérer, la personne se connecte avec son X sur pump.fun, et pump.fun signe une transaction on-chain qui contient son **ID X** et son wallet. Le watcher la voit en direct, retrouve le @ et les followers à partir de l'ID, et alerte aussitôt. Les @ de ta watchlist sont convertis en ID X au démarrage : la correspondance est immédiate, même si la personne change de @.
-2. **Activité on-chain.** Le watcher écoute tous les trades et toutes les créations de coins pump.fun (décodés avec l'IDL officiel de pump.fun, à jour au 13/10/2026). Pour chaque wallet actif, il demande à pump.fun quel X est lié, par lots de 50.
-3. **Patrouille.** En continu, il revérifie les wallets déjà vus sans X, du plus ancien au plus récent, même s'ils ne font plus rien. Une personne qui lie son X puis reste inactive est repérée au passage suivant, et l'alerte précise « vient de lier son X ».
+1. **Graphe social.** Sur pump.fun, un nouvel inscrit commence presque toujours par suivre des gens. Le watcher relit en boucle la liste des followers de profils « seed » : les 20 plus gros comptes X qu'il a déjà trouvés, plus les wallets que tu ajoutes dans `social.seedWallets`. Chaque nouveau follower est vérifié tout de suite. Les followers déjà présents rejoignent la patrouille.
+   Astuce pour la watchlist : mets en seed les profils pump.fun que @naseem va probablement suivre (ses proches, les gros KOLs de son cercle). Le wallet est dans l'URL du profil : `pump.fun/profile/<wallet>`.
+2. **Réclamation de frais.** Des coins peuvent réserver leurs frais de créateur à un compte X. Pour les récupérer, la personne se connecte avec son X sur pump.fun, et pump.fun signe une transaction on-chain qui contient son **ID X** et son wallet. Le watcher la voit en direct, retrouve le @ et les followers à partir de l'ID, et alerte aussitôt. Les @ de ta watchlist sont convertis en ID X au démarrage : la correspondance est immédiate, même si la personne change de @.
+3. **Activité on-chain.** Le watcher écoute tous les trades et toutes les créations de coins pump.fun (décodés avec l'IDL officiel de pump.fun, à jour au 13/10/2026). Pour chaque wallet actif, il demande à pump.fun quel X est lié, par lots de 50.
+4. **Patrouille.** En continu, il revérifie les wallets déjà vus sans X, du plus ancien au plus récent, même s'ils ne font plus rien. Une personne qui lie son X puis reste inactive est repérée au passage suivant, et l'alerte précise « vient de lier son X ».
 
 Dès qu'un X est trouvé, il est comparé à ta watchlist (alerte immédiate) et au seuil de followers. L'alerte contient : le @, les followers, ce qui l'a déclenchée (« réclame ses frais », « a créé $TICKER », « a acheté 2.00 SOL », « repéré par la patrouille »), le wallet, et les liens vers X, le profil pump.fun, le coin et la transaction.
 
 ## À savoir avant de l'utiliser
 
-- **Un nouveau compte qui lie son X sans rien faire on-chain reste invisible.** Ni trade, ni coin, ni réclamation de frais : pump.fun ne publie rien, et le wallet est inconnu, donc la patrouille ne peut pas le vérifier. Personne en dehors de pump.fun ne voit ce cas.
+- **Un nouveau compte qui lie son X sans rien faire reste invisible.** S'il ne suit aucun profil seed et ne fait ni trade, ni coin, ni réclamation de frais, son wallet est inconnu et personne en dehors de pump.fun ne peut le vérifier.
+- **La liste des followers n'a pas pu être testée en vrai** : son format et le fait qu'elle soit publique viennent du relevé de juin 2026. Vérifie avec `node src/index.js --social <wallet d'un gros profil>`. Si elle renvoie 401, il faut le jeton de ta session pump.fun dans `pump.jwt`.
 - **L'API pump.fun utilisée n'est pas officielle** (endpoints relevés dans le trafic du site le 17/06/2026). Elle peut changer sans prévenir. Le watcher teste plusieurs hôtes au démarrage et bascule sur `/users/<wallet>` si `/x/public-handles` ne répond plus. La patrouille ajoute environ une requête par seconde : baisse `patrol.walletsPerMinute` si pump.fun limite.
 - **Seuls les X affichés publiquement sur pump.fun sont visibles** pour l'activité et la patrouille. pump.fun permet de masquer le lien. Les réclamations de frais, elles, donnent l'ID X même si le lien est masqué.
 - **Au premier lancement**, les comptes déjà liés depuis longtemps déclenchent aussi une alerte la première fois qu'ils sont vus (« première détection »). Ça n'arrive qu'une fois par compte : tout est mémorisé dans `data/state.json`.
@@ -60,6 +64,9 @@ Pour vérifier les notifications sans attendre une vraie détection : `npm run t
 | `solana.pumpSwap` | Écoute aussi les trades des coins migrés sur PumpSwap (plus de wallets, plus de requêtes). |
 | `solana.socialClaims` | Écoute les réclamations de frais par compte X (détection instantanée). Lit ces transactions via l'URL HTTP du RPC : `solana.httpUrl`, ou à défaut `wsUrl` en `https://`. |
 | `patrol.walletsPerMinute` | Vitesse de la patrouille (défaut 3000). `0` la désactive. |
+| `social.seedWallets` | Wallets de profils pump.fun dont les nouveaux followers sont vérifiés tout de suite. Relu à chaud. |
+| `social.autoSeeds` | Nombre de plus gros comptes X déjà trouvés à surveiller aussi (défaut 20). |
+| `social.intervalSeconds` | Fréquence de relecture des followers (défaut 30 s, une requête par seed). |
 | `pumpPortal.enabled` | Flux de secours PumpPortal pour les nouveaux coins. |
 | `pump.recheckMinutes` | Délai minimum avant de revérifier un wallet vu sans X (défaut 5). |
 | `pump.jwt` | Seulement si pump.fun se met à exiger une connexion : le jeton de ta session pump.fun. |
@@ -96,13 +103,14 @@ L'Access Token, l'Access Token Secret, le Client ID et le Client Secret ne serve
 
 ```bash
 node src/index.js --check <wallet>      # quel X est lié à ce wallet pump.fun, et ses followers
+node src/index.js --social <wallet>     # followers pump.fun d'un profil (teste le graphe social)
 node src/index.js --followers @naseem   # followers d'un compte X
 node src/index.js --followers @naseem --via x-api   # teste tes identifiants API X
 node src/index.js --test-notify         # envoie une fausse alerte sur tous les canaux
 npm test                                # tests (décodage on-chain, logique d'alerte, clients)
 ```
 
-Toutes les minutes, le watcher affiche ses stats : activités on-chain reçues, wallets vérifiés (dont patrouille), wallets avec X, réclamations de frais X, alertes, taille de la file. Si `activités` reste à 0, le RPC Solana ne renvoie rien : change `solana.wsUrl`.
+Toutes les minutes, le watcher affiche ses stats : activités reçues, wallets vérifiés (dont patrouille), wallets avec X, nouveaux follows, réclamations de frais X, alertes, taille de la file. Si `activités` reste à 0, le RPC Solana ne renvoie rien : change `solana.wsUrl`.
 
 ## Le faire tourner 24h/24
 
